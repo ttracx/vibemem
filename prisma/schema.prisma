@@ -1,0 +1,189 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// NextAuth models
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// VibeMem models
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  apiKeys       ApiKey[]
+  agents        Agent[]
+  subscription  Subscription?
+  usageRecords  UsageRecord[]
+}
+
+model ApiKey {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  name      String
+  userId    String
+  createdAt DateTime @default(now())
+  lastUsed  DateTime?
+  revoked   Boolean  @default(false)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Agent {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  userId      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  memorySessions  MemorySession[]
+  shortTermMemory ShortTermMemory[]
+  longTermMemory  LongTermMemory[]
+}
+
+model MemorySession {
+  id              String   @id @default(cuid())
+  agentId         String
+  sessionId       String   @unique // External session identifier
+  rawTokenCount   Int      @default(0)
+  compressedTokenCount Int @default(0)
+  compressionRatio Float   @default(0)
+  status          String   @default("active") // active, archived, expired
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  expiresAt       DateTime?
+
+  agent    Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@index([agentId])
+  @@index([sessionId])
+}
+
+model Message {
+  id               String   @id @default(cuid())
+  sessionId        String
+  role             String   // user, assistant, system
+  content          String   @db.Text
+  compressedContent String? @db.Text
+  tokenCount       Int
+  compressedTokenCount Int?
+  importance       Float    @default(0.5) // 0-1 importance score
+  metadata         Json?
+  createdAt        DateTime @default(now())
+
+  session MemorySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+}
+
+model ShortTermMemory {
+  id        String   @id @default(cuid())
+  agentId   String
+  content   String   @db.Text
+  embedding Float[]  // Vector embedding for similarity search
+  importance Float   @default(0.5)
+  accessCount Int    @default(0)
+  lastAccessed DateTime @default(now())
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId])
+}
+
+model LongTermMemory {
+  id          String   @id @default(cuid())
+  agentId     String
+  category    String   // fact, preference, event, relationship
+  content     String   @db.Text
+  summary     String   @db.Text
+  embedding   Float[]
+  importance  Float    @default(0.5)
+  confidence  Float    @default(1.0)
+  accessCount Int      @default(0)
+  lastAccessed DateTime @default(now())
+  source      String?  // Where this memory came from
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId])
+  @@index([category])
+}
+
+model Subscription {
+  id                   String   @id @default(cuid())
+  userId               String   @unique
+  stripeCustomerId     String?  @unique
+  stripeSubscriptionId String?  @unique
+  stripePriceId        String?
+  tier                 String   @default("free") // free, starter, pro, enterprise
+  status               String   @default("active") // active, canceled, past_due
+  currentPeriodStart   DateTime?
+  currentPeriodEnd     DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model UsageRecord {
+  id             String   @id @default(cuid())
+  userId         String
+  type           String   // compression, retrieval, injection
+  tokensProcessed Int
+  timestamp      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, timestamp])
+}
