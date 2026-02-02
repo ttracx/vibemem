@@ -2,9 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import Stripe from 'stripe'
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2025-06-30.acacia',
-})
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!)
 
 export async function POST(req: NextRequest) {
   const body = await req.text()
@@ -30,7 +28,7 @@ export async function POST(req: NextRequest) {
       const customerId = session.customer as string
 
       // Get subscription details
-      const stripeSubscription = await stripe.subscriptions.retrieve(subscriptionId)
+      const stripeSubscription = await stripe.subscriptions.retrieve(subscriptionId) as Stripe.Subscription
       const priceId = stripeSubscription.items.data[0]?.price.id
 
       // Map price to tier
@@ -43,8 +41,8 @@ export async function POST(req: NextRequest) {
           stripePriceId: priceId,
           tier,
           status: 'active',
-          currentPeriodStart: new Date(stripeSubscription.current_period_start * 1000),
-          currentPeriodEnd: new Date(stripeSubscription.current_period_end * 1000),
+          currentPeriodStart: new Date((stripeSubscription as any).current_period_start * 1000),
+          currentPeriodEnd: new Date((stripeSubscription as any).current_period_end * 1000),
         },
       })
       break
@@ -60,8 +58,8 @@ export async function POST(req: NextRequest) {
         data: {
           tier,
           status: subscription.status === 'active' ? 'active' : 'past_due',
-          currentPeriodStart: new Date(subscription.current_period_start * 1000),
-          currentPeriodEnd: new Date(subscription.current_period_end * 1000),
+          currentPeriodStart: new Date((subscription as any).current_period_start * 1000),
+          currentPeriodEnd: new Date((subscription as any).current_period_end * 1000),
         },
       })
       break
@@ -83,13 +81,15 @@ export async function POST(req: NextRequest) {
     }
 
     case 'invoice.payment_failed': {
-      const invoice = event.data.object as Stripe.Invoice
+      const invoice = event.data.object as any
       const subscriptionId = invoice.subscription as string
 
-      await prisma.subscription.updateMany({
-        where: { stripeSubscriptionId: subscriptionId },
-        data: { status: 'past_due' },
-      })
+      if (subscriptionId) {
+        await prisma.subscription.updateMany({
+          where: { stripeSubscriptionId: subscriptionId },
+          data: { status: 'past_due' },
+        })
+      }
       break
     }
   }
@@ -98,7 +98,6 @@ export async function POST(req: NextRequest) {
 }
 
 function mapPriceToTier(priceId: string): string {
-  // These will be set after creating Stripe products
   const priceMap: Record<string, string> = {
     [process.env.STRIPE_STARTER_PRICE_ID || '']: 'starter',
     [process.env.STRIPE_PRO_PRICE_ID || '']: 'pro',
